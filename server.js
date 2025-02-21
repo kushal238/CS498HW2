@@ -2,6 +2,7 @@
 const express = require('express');
 const mariadb = require('mariadb');
 const bodyParser = require('body-parser');
+const axios = require('axios');  // Added for replication
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -13,10 +14,14 @@ const pool = mariadb.createPool({
     host: '127.0.0.1',         
     user: 'root',               
     password: 'hw2db@123A',     
-    database: 'hw2db',          
+    database: 'hw2db',
+    connectionLimit: 5
 });
 
-// Confirmig connection
+// Environment variable for other VM's IP
+const OTHER_VM_IP = process.env.OTHER_VM_IP;
+
+// Confirming connection
 (async () => {
     try {
         const conn = await pool.getConnection();
@@ -27,7 +32,7 @@ const pool = mariadb.createPool({
     }
 })();
 
-// greeting
+// /greeting
 app.get('/greeting', (req, res) => {
     res.send('<h1>Hello World!</h1>');
 });
@@ -43,6 +48,16 @@ app.post('/register', async (req, res) => {
         const conn = await pool.getConnection();
         await conn.query('INSERT INTO Users (username) VALUES (?)', [username]);
         conn.release();
+
+        // Replicating the user to the other VM
+        if (OTHER_VM_IP) {
+            try {
+                await axios.post(`http://${OTHER_VM_IP}:8080/register`, { username });
+            } catch (err) {
+                console.error(`Replication to ${OTHER_VM_IP} failed: ${err.message}`);
+            }
+        }
+
         res.status(201).json({ message: `User '${username}' registered successfully` });
     } catch (err) {
         if (err.code === 'ER_DUP_ENTRY') {
@@ -65,19 +80,29 @@ app.get('/list', async (req, res) => {
     }
 });
 
-//  /clear
+// /clear
 app.post('/clear', async (req, res) => {
     try {
         const conn = await pool.getConnection();
         await conn.query('DELETE FROM Users');
         conn.release();
+
+        // Replicating clear operation to the other VM
+        if (OTHER_VM_IP) {
+            try {
+                await axios.post(`http://${OTHER_VM_IP}:8080/clear`);
+            } catch (err) {
+                console.error(`Clear operation on ${OTHER_VM_IP} failed: ${err.message}`);
+            }
+        }
+
         res.json({ message: 'All users have been removed' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-
+// Server start
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on http://0.0.0.0:${PORT}`);
 });
