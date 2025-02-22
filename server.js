@@ -2,7 +2,7 @@
 const express = require('express');
 const mariadb = require('mariadb');
 const bodyParser = require('body-parser');
-const axios = require('axios');  // Added for replication
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -15,41 +15,41 @@ const pool = mariadb.createPool({
     user: 'root',               
     password: 'hw2db@123A',     
     database: 'hw2db',
-    connectionLimit: 5
+    connectionLimit: 20,       
+    acquireTimeout: 15000      
 });
 
-// Environment variable for other VM's IP
-const OTHER_VM_IP = process.env.OTHER_VM_IP;
+const OTHER_VM_IP = process.env.OTHER_VM_IP; //to replicate to the other VM
 
 // Confirming connection
 (async () => {
     try {
         const conn = await pool.getConnection();
         console.log('Connected to MariaDB!');
-        conn.release(); // Always release the connection
+        conn.release();
     } catch (err) {
         console.error('Error connecting to MariaDB:', err);
     }
 })();
 
-// /greeting
+// greeting
 app.get('/greeting', (req, res) => {
     res.send('<h1>Hello World!</h1>');
 });
 
-// /register
+// register
 app.post('/register', async (req, res) => {
     const { username } = req.body;
     if (!username) {
         return res.status(400).json({ error: 'Username is required' });
     }
 
+    let conn;
     try {
-        const conn = await pool.getConnection();
+        conn = await pool.getConnection();
         await conn.query('INSERT INTO Users (username) VALUES (?)', [username]);
-        conn.release();
 
-        // Replicating the user to the other VM
+        // Replicating to the other VM
         if (OTHER_VM_IP) {
             try {
                 await axios.post(`http://${OTHER_VM_IP}:8080/register`, { username });
@@ -57,37 +57,40 @@ app.post('/register', async (req, res) => {
                 console.error(`Replication to ${OTHER_VM_IP} failed: ${err.message}`);
             }
         }
-
         res.status(201).json({ message: `User '${username}' registered successfully` });
     } catch (err) {
         if (err.code === 'ER_DUP_ENTRY') {
             return res.status(400).json({ error: 'Username already exists' });
         }
         res.status(500).json({ error: err.message });
+    } finally {
+        if (conn) conn.release();
     }
 });
 
-// /list
+// list
 app.get('/list', async (req, res) => {
+    let conn;
     try {
-        const conn = await pool.getConnection();
+        conn = await pool.getConnection();
         const rows = await conn.query('SELECT username FROM Users');
-        conn.release();
         const users = rows.map(row => row.username);
         res.json({ users });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    } finally {
+        if (conn) conn.release(); 
     }
 });
 
-// /clear
+// clear
 app.post('/clear', async (req, res) => {
+    let conn;
     try {
-        const conn = await pool.getConnection();
+        conn = await pool.getConnection();
         await conn.query('DELETE FROM Users');
-        conn.release();
 
-        // Replicating clear operation to the other VM
+        // Replicate clear operation to the other VM if IP is set
         if (OTHER_VM_IP) {
             try {
                 await axios.post(`http://${OTHER_VM_IP}:8080/clear`);
@@ -99,6 +102,8 @@ app.post('/clear', async (req, res) => {
         res.json({ message: 'All users have been removed' });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    } finally {
+        if (conn) conn.release();
     }
 });
 
